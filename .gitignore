@@ -1,0 +1,20 @@
+# Python
+backend/.venv/
+**/__pycache__/
+*.pyc
+
+# Env files (never commit secrets)
+backend/.env
+frontend/.env
+!backend/.env.example
+!frontend/.env.example
+
+# Node / frontend build
+frontend/node_modules/
+frontend/dist/
+
+# Editor / OS
+.DS_Store
+
+# Terminal/log scratch
+*.log

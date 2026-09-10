@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: nortex-travel-expense-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash render_start.sh
+    envVars:
+      - key: DATABASE_URL
+        sync: false # provided by your Render Postgres instance
+      - key: DB_SCHEMA
+        value: Sample_test
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRES_MINUTES
+        value: "720"
+      - key: DEMO_PASSWORD
+        value: Nortex@123
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: CORS_ORIGINS
+        sync: false # set to your Vercel URL, e.g. https://nortex-expense.vercel.app
