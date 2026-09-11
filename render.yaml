@@ -19,6 +19,8 @@ services:
         value: "720"
       - key: DEMO_PASSWORD
         value: Nortex@123
+      - key: RESET_DEMO_DATA
+        value: "1"
       - key: AWS_ACCESS_KEY_ID
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
