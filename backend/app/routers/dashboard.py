@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models import ApprovalStep, Claim, Employee
 from app.models.enums import ApprovalStepStatus, ClaimStatus
 from app.schemas.dashboard import DashboardSummary, StageCount
+from app.services import workflow
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -25,12 +26,25 @@ def summary(employee: Employee = Depends(get_current_employee), db: Session = De
 
     my_claims_count = db.scalar(select(func.count(Claim.id)).where(Claim.employee_code == employee.emp_code)) or 0
 
-    awaiting = db.scalar(
-        select(func.count(ApprovalStep.id)).where(
+    # Every step in a claim's chain (including the terminal Finance step) is
+    # inserted as PENDING up front at submission time — a step only becomes
+    # actually actionable once every earlier step in the same cycle has been
+    # decided. Counting raw PENDING rows here would include steps still
+    # stuck behind an earlier approver, which never show up on the Approve
+    # or Finance queues; only count a step if it's genuinely the *current*
+    # one for its claim, exactly like /approvals/my-queue and
+    # /finance/verification-queue do.
+    candidate_steps = db.scalars(
+        select(ApprovalStep).where(
             ApprovalStep.assigned_to_code == employee.emp_code,
             ApprovalStep.status == ApprovalStepStatus.PENDING,
         )
-    ) or 0
+    ).all()
+    awaiting = 0
+    for step in candidate_steps:
+        claim = db.get(Claim, step.claim_id)
+        if claim and step.cycle_no == claim.cycle_no and workflow.current_step(claim) is step:
+            awaiting += 1
 
     return DashboardSummary(
         my_claims_count=my_claims_count,
