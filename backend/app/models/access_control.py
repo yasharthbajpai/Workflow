@@ -70,3 +70,10 @@ class Employee(Base):
     reporting_manager: Mapped["Employee | None"] = relationship(
         remote_side="Employee.emp_code", foreign_keys=[reporting_manager_code]
     )
+
+    @property
+    def reporting_manager_name(self) -> str | None:
+        """Convenience for the Travel Request Form's employee-detail block,
+        which prints the manager's name rather than their code.
+        """
+        return self.reporting_manager.name if self.reporting_manager else None

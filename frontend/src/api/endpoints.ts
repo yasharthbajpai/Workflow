@@ -7,6 +7,7 @@ import type {
   Employee,
   LoginResponse,
   TravelRequest,
+  TravelRequestCreatePayload,
 } from "../types";
 
 export const AuthApi = {
@@ -23,7 +24,7 @@ export const EmployeesApi = {
 export const TravelRequestsApi = {
   mine: () => api.get<TravelRequest[]>("/travel-requests/mine").then((r) => r.data),
   get: (id: number) => api.get<TravelRequest>(`/travel-requests/${id}`).then((r) => r.data),
-  create: (payload: Partial<TravelRequest>) =>
+  create: (payload: TravelRequestCreatePayload) =>
     api.post<TravelRequest>("/travel-requests", payload).then((r) => r.data),
   documents: (id: number) => api.get<DocumentOut[]>(`/travel-requests/${id}/documents`).then((r) => r.data),
   scan: (id: number) => api.post<ClaimDetail>(`/travel-requests/${id}/scan`).then((r) => r.data),

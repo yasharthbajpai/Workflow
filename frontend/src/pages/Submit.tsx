@@ -3,110 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ClaimsApi, TravelRequestsApi } from "../api/endpoints";
 import { ClaimLinesTable } from "../components/ClaimLinesTable";
+import { TravelRequestForm } from "../components/TravelRequestForm";
 import { inr, shortDate } from "../lib/format";
 import type { ClaimDetail } from "../types";
-
-function NewTravelRequestForm({ onCreated }: { onCreated: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({
-    from_date: "",
-    to_date: "",
-    visiting_place: "",
-    city: "",
-    purpose: "",
-    mode_of_travel: "Flight",
-    is_international: false,
-    estimated_total: 0,
-    advance_requested: 0,
-  });
-  const create = useMutation({
-    mutationFn: () => TravelRequestsApi.create(form),
-    onSuccess: () => {
-      setOpen(false);
-      onCreated();
-    },
-  });
-
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="rounded-md border border-dashed border-slate-300 px-4 py-2 text-sm text-slate-500 hover:border-blue-400 hover:text-blue-600"
-      >
-        + New travel request
-      </button>
-    );
-  }
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        create.mutate();
-      }}
-      className="grid grid-cols-2 gap-3 rounded-xl border bg-white p-4 shadow-sm md:grid-cols-4"
-    >
-      <input
-        required
-        type="date"
-        value={form.from_date}
-        onChange={(e) => setForm({ ...form, from_date: e.target.value })}
-        className="rounded border px-2 py-1.5 text-sm"
-      />
-      <input
-        required
-        type="date"
-        value={form.to_date}
-        onChange={(e) => setForm({ ...form, to_date: e.target.value })}
-        className="rounded border px-2 py-1.5 text-sm"
-      />
-      <input
-        required
-        placeholder="Visiting place"
-        value={form.visiting_place}
-        onChange={(e) => setForm({ ...form, visiting_place: e.target.value })}
-        className="rounded border px-2 py-1.5 text-sm"
-      />
-      <input
-        required
-        placeholder="City (for tier lookup)"
-        value={form.city}
-        onChange={(e) => setForm({ ...form, city: e.target.value })}
-        className="rounded border px-2 py-1.5 text-sm"
-      />
-      <input
-        required
-        placeholder="Purpose"
-        value={form.purpose}
-        onChange={(e) => setForm({ ...form, purpose: e.target.value })}
-        className="col-span-2 rounded border px-2 py-1.5 text-sm"
-      />
-      <input
-        type="number"
-        placeholder="Advance requested"
-        value={form.advance_requested}
-        onChange={(e) => setForm({ ...form, advance_requested: Number(e.target.value) })}
-        className="rounded border px-2 py-1.5 text-sm"
-      />
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={form.is_international}
-          onChange={(e) => setForm({ ...form, is_international: e.target.checked })}
-        />
-        International
-      </label>
-      <div className="col-span-2 flex gap-2 md:col-span-4">
-        <button type="submit" className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white">
-          Create
-        </button>
-        <button type="button" onClick={() => setOpen(false)} className="rounded px-4 py-1.5 text-sm text-slate-500">
-          Cancel
-        </button>
-      </div>
-    </form>
-  );
-}
 
 export function SubmitPage() {
   const qc = useQueryClient();
@@ -171,8 +70,9 @@ export function SubmitPage() {
             </button>
           </div>
         ))}
-        <NewTravelRequestForm onCreated={() => refetch()} />
       </div>
+
+      <TravelRequestForm onCreated={() => refetch()} />
 
       {claim && (
         <div className="rounded-xl border bg-white p-5 shadow-sm">

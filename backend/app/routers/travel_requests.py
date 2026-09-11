@@ -3,14 +3,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.deps import get_current_employee, require_permission
 from app.database import get_db
-from app.models import Document, Employee, TravelRequest
+from app.models import Advance, Document, Employee, EstimateLine, TravelRequest
 from app.models.enums import TravelRequestStatus
 from app.schemas.claim import ClaimDetailOut
 from app.schemas.travel import DocumentOut, TravelRequestCreate, TravelRequestOut
+from app.services import policy_engine
 from app.services.claim_builder import build_or_refresh_claim
 from app.services.claim_serialize import serialize_claim_detail
 
@@ -26,7 +27,10 @@ def _next_travel_request_no(db: Session) -> str:
 @router.get("/mine", response_model=list[TravelRequestOut])
 def my_travel_requests(employee: Employee = Depends(get_current_employee), db: Session = Depends(get_db)):
     rows = db.scalars(
-        select(TravelRequest).where(TravelRequest.employee_code == employee.emp_code).order_by(TravelRequest.id.desc())
+        select(TravelRequest)
+        .options(selectinload(TravelRequest.estimate_lines))
+        .where(TravelRequest.employee_code == employee.emp_code)
+        .order_by(TravelRequest.id.desc())
     ).all()
     return [TravelRequestOut.model_validate(r) for r in rows]
 
@@ -37,15 +41,64 @@ def create_travel_request(
     employee: Employee = Depends(get_current_employee),
     db: Session = Depends(get_db),
 ):
+    """Creates a Travel Request from Form NTX-TRF-02: the header detail, the
+    itemised estimated-cost lines, and (if one is asked for) the advance.
+
+    The header's estimated_total is the =SUM() of the estimate lines, and the
+    advance is checked against policy 1.2's ceiling on the *employee-borne*
+    share of that estimate — the company-borne heads (centrally booked
+    flights, hotels billed to the company) are never advanced to the
+    employee, so they cannot inflate what can be drawn.
+    """
+    estimated_total = round(sum(line.estimate for line in payload.estimate_lines), 2)
+    employee_borne = round(
+        sum(line.estimate for line in payload.estimate_lines if line.borne_by == "Employee"), 2
+    )
+
+    if payload.advance_requested > 0:
+        if not payload.estimate_lines:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "An advance needs an estimated-cost breakdown to be checked against — add at least one estimate line.",
+            )
+        max_pct = float(policy_engine.get_config(db, "ADVANCE_MAX_PCT_OF_ESTIMATE"))
+        cap = round(employee_borne * max_pct / 100, 2)
+        if payload.advance_requested > cap:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Advance of INR {payload.advance_requested:,.2f} exceeds policy 1.2: at most {max_pct:g}% of the "
+                f"INR {employee_borne:,.2f} employee-borne estimate (INR {cap:,.2f}) can be advanced.",
+            )
+
+    header = payload.model_dump(exclude={"estimate_lines"})
     tr = TravelRequest(
         travel_request_no=_next_travel_request_no(db),
         employee_code=employee.emp_code,
         status=TravelRequestStatus.APPROVED,  # travel-approval email thread is out of scope for this build
-        **payload.model_dump(),
+        estimated_total=estimated_total,
+        **header,
     )
     db.add(tr)
+    db.flush()
+
+    for line in payload.estimate_lines:
+        db.add(EstimateLine(travel_request_id=tr.id, **line.model_dump()))
+
+    if payload.advance_requested > 0:
+        # Recorded here so the claim's settlement actually nets the advance
+        # off (claim_builder reads travel_request.advance); without this row
+        # an advance asked for on the form would silently never be drawn.
+        db.add(
+            Advance(
+                travel_request_id=tr.id,
+                reference=f"ADV/{tr.travel_request_no}",
+                amount=payload.advance_requested,
+            )
+        )
+
     db.commit()
     db.refresh(tr)
+    db.refresh(tr, attribute_names=["estimate_lines"])
     return TravelRequestOut.model_validate(tr)
 
 
@@ -61,6 +114,7 @@ def _get_owned_travel_request(db: Session, travel_request_id: int, employee: Emp
 @router.get("/{travel_request_id}", response_model=TravelRequestOut)
 def get_travel_request(travel_request_id: int, employee: Employee = Depends(get_current_employee), db: Session = Depends(get_db)):
     tr = _get_owned_travel_request(db, travel_request_id, employee)
+    db.refresh(tr, attribute_names=["estimate_lines"])
     return TravelRequestOut.model_validate(tr)
 
 

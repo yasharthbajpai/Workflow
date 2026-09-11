@@ -8,7 +8,7 @@ role_permission join table.
 """
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import decode_access_token
 from app.database import get_db
@@ -31,7 +31,11 @@ def get_current_employee(
     payload = decode_access_token(token)
     if not payload or "sub" not in payload:
         raise credentials_error
-    employee = db.get(Employee, payload["sub"])
+    employee = db.get(
+        Employee,
+        payload["sub"],
+        options=[selectinload(Employee.reporting_manager), selectinload(Employee.role)],
+    )
     if not employee:
         raise credentials_error
     return employee

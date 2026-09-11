@@ -6,7 +6,7 @@ without hardcoding the password twice.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
 from app.core.deps import get_current_employee
@@ -20,7 +20,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
-    employee = db.scalar(select(Employee).where(Employee.email == payload.email.lower().strip()))
+    employee = db.scalar(
+        select(Employee)
+        .options(selectinload(Employee.reporting_manager))
+        .where(Employee.email == payload.email.lower().strip())
+    )
     if not employee or not verify_password(payload.password, employee.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     token = create_access_token(subject=employee.emp_code, extra_claims={"role": employee.role_code})
@@ -38,5 +42,7 @@ def demo_users(db: Session = Depends(get_db)) -> list[EmployeeOut]:
     account. The shared demo password is never stored — only the plaintext
     default from settings, surfaced once here for the demo login screen.
     """
-    employees = db.scalars(select(Employee).order_by(Employee.emp_code)).all()
+    employees = db.scalars(
+        select(Employee).options(selectinload(Employee.reporting_manager)).order_by(Employee.emp_code)
+    ).all()
     return [EmployeeOut.model_validate(e) for e in employees]

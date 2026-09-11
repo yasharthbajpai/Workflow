@@ -4,15 +4,27 @@ export interface Employee {
   email: string;
   designation: string;
   department: string;
+  cost_centre: string;
   city: string;
   role_code: string;
   reporting_manager_code: string | null;
+  reporting_manager_name: string | null;
 }
 
 export interface LoginResponse {
   access_token: string;
   token_type: string;
   employee: Employee;
+}
+
+export type BorneBy = "Employee" | "Company";
+
+export interface EstimateLine {
+  id: number;
+  head: string;
+  basis: string;
+  estimate: number;
+  borne_by: BorneBy;
 }
 
 export interface TravelRequest {
@@ -29,6 +41,19 @@ export interface TravelRequest {
   estimated_total: number;
   advance_requested: number;
   status: string;
+  estimate_lines: EstimateLine[];
+}
+
+export interface TravelRequestCreatePayload {
+  from_date: string;
+  to_date: string;
+  visiting_place: string;
+  city: string;
+  purpose: string;
+  mode_of_travel: string;
+  is_international: boolean;
+  advance_requested: number;
+  estimate_lines: Omit<EstimateLine, "id">[];
 }
 
 export interface DocumentOut {
