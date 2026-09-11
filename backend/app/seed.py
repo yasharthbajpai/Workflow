@@ -355,9 +355,19 @@ def seed_chaitanya_trip(db: Session) -> TravelRequest | None:
     return tr
 
 
-def run() -> None:
-    ensure_schema()
-    db = SessionLocal()
+def run(db: Session | None = None) -> None:
+    """Seeds roles/permissions/employees/policy-data/the demo trip/documents.
+
+    Called with no args for the real app (against settings.db_schema, owns
+    and closes its own session). Also called by the standalone smoke-test
+    scripts with an explicit `db` bound to an isolated schema (see
+    scripts/_smoke_db.py) so they can seed a throwaway copy of this same
+    data without touching the shared database the running app/demo uses.
+    """
+    owns_session = db is None
+    if owns_session:
+        ensure_schema()
+        db = SessionLocal()
     try:
         seed_roles_and_permissions(db)
         seed_employees(db)
@@ -374,7 +384,8 @@ def run() -> None:
         db.rollback()
         raise
     finally:
-        db.close()
+        if owns_session:
+            db.close()
 
 
 if __name__ == "__main__":

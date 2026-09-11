@@ -12,17 +12,25 @@ the numbers the plan calls out explicitly:
     (INR 17,250 x 12% = INR 2,070, not the full INR 2,304 on the invoice)
   - the INR 2,255 dinner is blocked as business entertainment missing
     attendee names
+  - the hotel invoice and dinner bill are each seeded twice (once as an
+    .eml body, once as a scanned .png of the same physical bill); the second
+    copy of each must be excluded as a DUPLICATE_DOCUMENT, not reimbursed
+    twice (policy 5.3)
+
+This runs entirely against an isolated "<DB_SCHEMA>_smoke" schema (see
+scripts/_smoke_db.py) — never the shared database the running app/demo uses.
 
 Run with: backend/.venv/bin/python -m scripts.smoke_test_policy_engine
 """
 from datetime import date
 
-from app.database import SessionLocal
+from app import seed
 from app.models import Document, TravelRequest
 from app.models.enums import ExtractionMode
 from app.schemas.extraction import ExtractedDocType, ExtractedLineItem, ExtractionResult, PaymentMethodHint
 from app.services import policy_engine
 from app.services.claim_builder import build_or_refresh_claim
+from scripts._smoke_db import reset_smoke_schema, smoke_session
 
 # doc filename -> the ExtractionResult Bedrock is expected to return for it.
 EXPECTED: dict[str, ExtractionResult] = {
@@ -145,13 +153,50 @@ EXPECTED: dict[str, ExtractionResult] = {
         gross_amount=1229.02,
         payment_method=PaymentMethodHint.PERSONAL_CARD,
     ),
-    "hotel_invoice_1188.png": ExtractionResult(doc_type=ExtractedDocType.OTHER, discard=True, discard_reason="duplicate image of the invoice email"),
-    "dinner_bill_18jun.png": ExtractionResult(doc_type=ExtractedDocType.OTHER, discard=True, discard_reason="duplicate image of the dinner bill email"),
+    # These two images are scans of the SAME physical bills as
+    # 12_hotel_invoice.eml and 11_dinner_bill.eml respectively — a real
+    # extraction model reads them as full, independent HOTEL_INVOICE /
+    # BUSINESS_ENTERTAINMENT_BILL results (it has no way to know they're
+    # duplicates), so that's what's asserted here too. Catching the
+    # duplication is policy_engine.py's job (_hotel_invoice_key /
+    # _meal_or_entertainment_key + DUPLICATE_DOCUMENT), not the model's.
+    "hotel_invoice_1188.png": ExtractionResult(
+        doc_type=ExtractedDocType.HOTEL_INVOICE,
+        discard=False,
+        merchant="Keys Prime Whitefield",
+        bill_number="KPW/26-27/1188",
+        check_in=date(2026, 6, 16),
+        check_out=date(2026, 6, 19),
+        nights=3,
+        line_items=[
+            ExtractedLineItem(label="Room Charge", item_date=date(2026, 6, 16), amount=5750.00),
+            ExtractedLineItem(label="Room Charge", item_date=date(2026, 6, 17), amount=5750.00),
+            ExtractedLineItem(label="Laundry", item_date=date(2026, 6, 17), amount=450.00),
+            ExtractedLineItem(label="Room Charge", item_date=date(2026, 6, 18), amount=5750.00),
+            ExtractedLineItem(label="Mini Bar", item_date=date(2026, 6, 18), amount=380.00),
+            ExtractedLineItem(label="In Room Dining", item_date=date(2026, 6, 18), amount=1120.00),
+        ],
+        subtotal=19200.00,
+        tax_total=2304.00,
+    ),
+    "dinner_bill_18jun.png": ExtractionResult(
+        doc_type=ExtractedDocType.BUSINESS_ENTERTAINMENT_BILL,
+        discard=False,
+        merchant="Spice Terrace",
+        txn_date=date(2026, 6, 18),
+        gross_amount=2255.00,
+        attendee_count=4,
+        attendee_names=[],
+        attendee_org=None,
+    ),
 }
 
 
 def main() -> None:
-    db = SessionLocal()
+    reset_smoke_schema()
+    db = smoke_session()
+    seed.run(db)
+
     tr = db.query(TravelRequest).filter(TravelRequest.travel_request_no == "TRQ-2026-0001").one()
 
     docs = db.query(Document).filter(Document.travel_request_id == tr.id).all()
@@ -208,7 +253,18 @@ def main() -> None:
     assert minibar and minibar[0].disallowed_amount == 380.00
 
     dinner = [l for l in claim.lines if l.head == "Business entertainment"]
-    assert dinner and any(f.code == "BE_MISSING_ATTENDEES" for f in dinner[0].flags), "dinner must be blocked for missing attendees"
+    assert len(dinner) == 1, f"expected exactly one Business entertainment line (the .png duplicate must be excluded), got {len(dinner)}"
+    assert any(f.code == "BE_MISSING_ATTENDEES" for f in dinner[0].flags), "dinner must be blocked for missing attendees"
+
+    lodging_all = [l for l in claim.lines if l.description.startswith("Keys Prime") or "Keys Prime" in (l.merchant or "")]
+    duplicate_hotel = [l for l in lodging_all if l.excluded and any(f.code == "DUPLICATE_DOCUMENT" for f in l.flags)]
+    assert len(duplicate_hotel) == 1, f"expected exactly one excluded duplicate hotel-invoice line, got {len(duplicate_hotel)}"
+    assert duplicate_hotel[0].disallowed_amount == 21504.00, f"duplicate hotel invoice should carry its full gross amount as disallowed, got {duplicate_hotel[0].disallowed_amount}"
+
+    duplicate_dinner = [
+        l for l in claim.lines if l.excluded and l.merchant == "Spice Terrace" and any(f.code == "DUPLICATE_DOCUMENT" for f in l.flags)
+    ]
+    assert len(duplicate_dinner) == 1, f"expected exactly one excluded duplicate dinner-bill line, got {len(duplicate_dinner)}"
 
     blocking = policy_engine.has_blocking_flags(claim)
     assert blocking, "claim should have at least one BLOCK flag (missing BE attendees) preventing submission"

@@ -2,18 +2,27 @@
 double-level case (policy 2.2) end to end through submit -> approve x2 ->
 finance verify -> pay, plus a return/resubmit cycle (policy 2.3).
 
+This runs entirely against an isolated "<DB_SCHEMA>_smoke" schema (see
+scripts/_smoke_db.py) — never the shared database the running app/demo uses,
+since submit_claim/approve_step/release_payment etc. all call db.commit()
+internally and would otherwise permanently create/pay a fake claim visible
+in Approvals/Finance/Dashboard for anyone demoing the live app.
+
 Run with: backend/.venv/bin/python -m scripts.smoke_test_workflow
 """
 from datetime import date
 
-from app.database import SessionLocal
+from app import seed
 from app.models import Advance, Claim, Employee, TravelRequest
 from app.models.enums import ApprovalStepStatus, ClaimStatus, TravelRequestStatus
 from app.services import workflow
+from scripts._smoke_db import reset_smoke_schema, smoke_session
 
 
 def main() -> None:
-    db = SessionLocal()
+    reset_smoke_schema()
+    db = smoke_session()
+    seed.run(db)
 
     suresh = db.get(Employee, "NX-2210")
     assert suresh is not None

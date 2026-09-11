@@ -111,6 +111,60 @@ def _norm(s: str | None) -> str:
     return (s or "").strip().lower()
 
 
+def _hotel_invoice_key(ext: ExtractionResult) -> tuple:
+    """Identity of the physical folio, independent of which document carried
+    it (an .eml with the invoice as text, and a scanned/attached image of the
+    same invoice both produce a HOTEL_INVOICE extraction).
+    """
+    if ext.bill_number:
+        return ("bill_number", _norm(ext.bill_number))
+    return ("composite", _norm(ext.merchant), r2(ext.subtotal or 0), r2(ext.tax_total or 0))
+
+
+def _meal_or_entertainment_key(ext: ExtractionResult) -> tuple:
+    amount = ext.gross_amount
+    if amount is None and ext.line_items:
+        amount = sum(i.amount for i in ext.line_items) + (ext.tax_total or 0)
+    return (_norm(ext.merchant), r2(amount or 0))
+
+
+def _duplicate_document_line(doc: Document, ext: ExtractionResult, original_doc_id: int, kind: str) -> DraftLine:
+    """A second document (e.g. the same hotel invoice received as both an
+    .eml body and a scanned image) describing a bill already recorded from
+    another document in this claim — excluded outright, never reimbursed
+    twice, mirroring the existing duplicate-cab-receipt handling.
+    """
+    amount = ext.gross_amount
+    if amount is None and ext.line_items:
+        amount = sum(i.amount for i in ext.line_items) + (ext.tax_total or 0)
+    amount = amount or 0
+    return DraftLine(
+        section=ClaimSection.OTHER,
+        head="Duplicate document",
+        description=f"{ext.merchant or kind.title()} — same {kind} already recorded from document {original_doc_id}",
+        gross_amount=amount,
+        document_id=doc.id,
+        txn_date=ext.txn_date or ext.check_in,
+        merchant=ext.merchant,
+        excluded=True,
+        disallowed_amount=amount,
+        disallowed_reason=(
+            f"Duplicate {kind} — same bill already recorded from another document in this claim "
+            "(likely the same document received as both text and an image) — policy 5.3"
+        ),
+        source=doc.extraction_mode or "MANUAL",
+        confidence=ext.confidence,
+        flags=[
+            (
+                "DUPLICATE_DOCUMENT",
+                FlagSeverity.WARN,
+                "5.3",
+                f"Same {kind} already recorded from document {original_doc_id}",
+            )
+        ],
+    )
+
+
 def build_draft_lines(
     db: Session,
     travel_request: TravelRequest,
@@ -119,6 +173,11 @@ def build_draft_lines(
     """Dispatch every document's ExtractionResult into zero or more DraftLines."""
     tier = get_city_tier(db, travel_request.city)
     lines: list[DraftLine] = []
+    # Tracks the *first* document that produced a given hotel-invoice or
+    # meal/entertainment-bill identity, so a second document describing the
+    # same physical bill (e.g. the invoice's .eml text and a scanned image
+    # of the same invoice) is excluded instead of reimbursed twice.
+    seen_documents: dict[tuple, int] = {}
 
     for doc, ext in documents_and_results:
         if ext.discard and ext.doc_type not in (
@@ -181,14 +240,29 @@ def build_draft_lines(
         elif ext.doc_type == ExtractedDocType.CAB_RECEIPT:
             lines.append(_draft_cab(doc, ext))
         elif ext.doc_type == ExtractedDocType.HOTEL_INVOICE:
-            lines.extend(_draft_hotel_invoice(db, doc, ext, tier))
+            key = ("HOTEL_INVOICE", *_hotel_invoice_key(ext))
+            original_doc_id = seen_documents.get(key)
+            if original_doc_id is not None:
+                lines.append(_duplicate_document_line(doc, ext, original_doc_id, "hotel folio"))
+            else:
+                seen_documents[key] = doc.id
+                lines.extend(_draft_hotel_invoice(db, doc, ext, tier))
         elif ext.doc_type in (ExtractedDocType.MEAL_BILL, ExtractedDocType.BUSINESS_ENTERTAINMENT_BILL):
-            lines.append(_draft_meal_or_entertainment(doc, ext))
+            key = ("MEAL_OR_BE", *_meal_or_entertainment_key(ext))
+            original_doc_id = seen_documents.get(key)
+            if original_doc_id is not None:
+                lines.append(_duplicate_document_line(doc, ext, original_doc_id, "meal/entertainment bill"))
+            else:
+                seen_documents[key] = doc.id
+                lines.append(_draft_meal_or_entertainment(doc, ext))
         elif ext.doc_type == ExtractedDocType.HOTEL_VOUCHER:
             # Booking intent only; the invoice (if it arrives) is the source
-            # of truth for the claim. Surface a mismatch as INFO if nights
-            # differ from what was actually billed — handled once both are
-            # present, in reconcile_hotel_voucher_vs_invoice below.
+            # of truth for the claim, so the voucher never becomes a claim
+            # line itself. NOTE: there is no reconciliation yet between the
+            # voucher's booked nights/tariff and what the invoice actually
+            # bills — a real mismatch (e.g. an early checkout) would go
+            # unnoticed today. Flagged in the delivery note as a known gap,
+            # not implemented.
             continue
         else:
             lines.append(
@@ -330,7 +404,11 @@ def _draft_hotel_invoice(db: Session, doc: Document, ext: ExtractionResult, tier
     tax_rate = (tax_total / invoice_subtotal) if invoice_subtotal else 0
     apportioned_room_tax = r2(room_subtotal * tax_rate)
 
-    nights = len(room_items) or ext.nights or 1
+    # Prefer the model's own `nights` field over counting room_items: how
+    # many room-charge lines a folio gets split into varies run-to-run (one
+    # consolidated "Room Charge" line for the whole stay vs. one per night),
+    # so counting them is an unstable proxy for how many nights to cap.
+    nights = ext.nights or len(room_items) or 1
     per_night = room_subtotal / nights if nights else room_subtotal
     cap = float(lodging_cap_for_tier(db, tier))
     cap_total = cap * nights

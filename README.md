@@ -56,7 +56,11 @@ lists every account. Every demo account shares the password `Nortex@123`.
 ### 3. Verify the policy engine and workflow independently
 
 Two standalone scripts exercise the core logic against the real pack data,
-without needing the API or a browser:
+without needing the API or a browser. Both run entirely against an isolated
+`<DB_SCHEMA>_smoke` schema on the same database (dropped and recreated fresh
+on every run, seeded independently) — they never read or write a single row
+of the real schema your app/demo uses, even though they call `db.commit()`
+internally via the workflow/claim-builder code paths:
 
 ```bash
 cd backend
