@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.models import Advance, Claim, Document, TravelRequest
 from app.models.enums import ClaimStatus
 from app.services import policy_engine
-from app.services.gemini_extraction import extract_document
+from app.services.bedrock_extraction import extract_document
 from app.schemas.extraction import ExtractionResult
 
 

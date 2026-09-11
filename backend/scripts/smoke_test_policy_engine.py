@@ -1,6 +1,6 @@
 """Manual verification script (not pytest) for the policy engine.
 
-Builds the ExtractionResult that Gemini is expected to produce for every
+Builds the ExtractionResult that Bedrock is expected to produce for every
 seeded document in Chaitanya Reddy's Bengaluru trip, feeds them through the
 policy engine exactly the way /travel-requests/{id}/scan does, and asserts
 the numbers the plan calls out explicitly:
@@ -24,7 +24,7 @@ from app.schemas.extraction import ExtractedDocType, ExtractedLineItem, Extracti
 from app.services import policy_engine
 from app.services.claim_builder import build_or_refresh_claim
 
-# doc filename -> the ExtractionResult Gemini is expected to return for it.
+# doc filename -> the ExtractionResult Bedrock is expected to return for it.
 EXPECTED: dict[str, ExtractionResult] = {
     "01_travel_approval_request.eml": ExtractionResult(doc_type=ExtractedDocType.TRAVEL_APPROVAL_REQUEST, discard=True),
     "02_travel_approval_granted.eml": ExtractionResult(doc_type=ExtractedDocType.TRAVEL_APPROVAL_GRANTED, discard=True),

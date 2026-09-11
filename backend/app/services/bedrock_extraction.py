@@ -1,20 +1,22 @@
 """Turns one Document (an .eml's text, or a receipt image) into an
 ExtractionResult.
 
-Primary path: Gemini (gemini-3.6-flash by default, GEMINI_MODEL from env)
-with response_schema=ExtractionResult, so the SDK validates the shape and
-hands back response.parsed directly — see the client pattern in
-GEMINI_API_KEY / GEMINI_MODEL env docs.
+Primary path: AWS Bedrock (BEDROCK_MODEL_ID from env, e.g. an Anthropic Claude
+model id) via the model-agnostic Converse API, with a forced tool-use call so
+the response is pinned to the ExtractionResult JSON schema instead of a string
+the app would have to hand-parse.
 
 Fallback path: a small set of regex parsers for the three known senders in
 this pack (Uber, MakeMyTrip, hotel/restaurant tax invoices), used when
-GEMINI_API_KEY is unset or the API call raises/times out, so a demo never
-hard-fails on a rate limit. Document.extraction_mode records which path ran.
+BEDROCK_MODEL_ID is unset or the API call raises/times out, so a demo never
+hard-fails on a throttling error or missing credentials. Document.extraction_mode
+records which path ran.
 """
 from __future__ import annotations
 
 import logging
 import re
+import threading
 from datetime import date, datetime
 
 from app.config import settings
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """You are an expense-document parser for an Indian company's travel desk.
 You will be shown the text (or image) of ONE email or receipt from an employee's inbox.
-Extract it into the given JSON schema exactly. Rules:
+Extract it into the given JSON schema exactly, by calling the extract_expense_document tool. Rules:
 - If the message is a travel-approval thread, an advance-disbursement notice, a marketing/promo
   email, or otherwise not a specific claimable transaction, set discard=true with a short reason.
 - If a payment failed (e.g. "Payment failed", "We could not charge your card"), set
@@ -42,56 +44,94 @@ Extract it into the given JSON schema exactly. Rules:
 - Never invent numbers. If a field is not present in the document, leave it null/empty.
 """
 
+_TOOL_NAME = "extract_expense_document"
+
 _client = None
+_client_lock = threading.Lock()
 
 
 def _get_client():
+    """Thread-safe singleton bedrock-runtime client, built once and reused."""
     global _client
     if _client is None:
-        from google import genai
+        with _client_lock:
+            if _client is None:
+                import boto3
 
-        _client = genai.Client(api_key=settings.gemini_api_key)
+                kwargs: dict[str, str] = {"region_name": settings.aws_region}
+                if settings.aws_access_key_id and settings.aws_secret_access_key:
+                    kwargs["aws_access_key_id"] = settings.aws_access_key_id
+                    kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+                _client = boto3.client("bedrock-runtime", **kwargs)
     return _client
 
 
+def _tool_config() -> dict:
+    # Pydantic's JSON schema (incl. $defs for ExtractedLineItem/enums) is
+    # passed straight through as the tool's inputSchema — Bedrock's Converse
+    # API forwards it to the underlying model's native tool-use format.
+    schema = ExtractionResult.model_json_schema()
+    return {
+        "tools": [
+            {
+                "toolSpec": {
+                    "name": _TOOL_NAME,
+                    "description": "Extract structured fields from one expense-related email or receipt.",
+                    "inputSchema": {"json": schema},
+                }
+            }
+        ],
+        "toolChoice": {"tool": {"name": _TOOL_NAME}},
+    }
+
+
 def extract_document(document: Document) -> tuple[ExtractionResult, ExtractionMode]:
-    if settings.gemini_api_key:
+    if settings.bedrock_model_id:
         try:
-            result = _extract_with_gemini(document)
-            return result, ExtractionMode.GEMINI
-        except Exception:  # noqa: BLE001 — any SDK/network failure falls back
-            logger.exception("Gemini extraction failed for document %s, falling back to regex", document.id)
+            result = _extract_with_bedrock(document)
+            return result, ExtractionMode.BEDROCK
+        except Exception:  # noqa: BLE001 — any SDK/network/credentials failure falls back
+            logger.exception("Bedrock extraction failed for document %s, falling back to regex", document.id)
     result = _extract_with_regex(document)
     return result, ExtractionMode.REGEX_FALLBACK
 
 
-def _extract_with_gemini(document: Document) -> ExtractionResult:
-    from google.genai import types
+def _image_format(mime_type: str | None) -> str:
+    fmt = (mime_type or "image/png").split("/")[-1].lower()
+    return "jpeg" if fmt == "jpg" else fmt
 
+
+def _extract_with_bedrock(document: Document) -> ExtractionResult:
     client = _get_client()
 
     if document.image_bytes:
-        parts = [
-            types.Part.from_bytes(data=document.image_bytes, mime_type=document.mime_type or "image/png"),
-            f"Filename: {document.filename}\nSubject: {document.subject or ''}",
+        content = [
+            {"image": {"format": _image_format(document.mime_type), "source": {"bytes": document.image_bytes}}},
+            {"text": f"Filename: {document.filename}\nSubject: {document.subject or ''}"},
         ]
     else:
-        parts = [
-            f"From: {document.sender or ''}\nSubject: {document.subject or ''}\n\n{document.raw_text or ''}"
+        content = [
+            {
+                "text": (
+                    f"From: {document.sender or ''}\nSubject: {document.subject or ''}\n\n"
+                    f"{document.raw_text or ''}"
+                )
+            }
         ]
 
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents=[_SYSTEM_PROMPT, *parts],
-        config={
-            "response_mime_type": "application/json",
-            "response_schema": ExtractionResult,
-        },
+    response = client.converse(
+        modelId=settings.bedrock_model_id,
+        system=[{"text": _SYSTEM_PROMPT}],
+        messages=[{"role": "user", "content": content}],
+        toolConfig=_tool_config(),
     )
-    parsed = response.parsed
-    if parsed is None:
-        raise ValueError("Gemini returned no parsed structured output")
-    return parsed
+
+    for block in response["output"]["message"]["content"]:
+        tool_use = block.get("toolUse")
+        if tool_use and tool_use.get("name") == _TOOL_NAME:
+            return ExtractionResult.model_validate(tool_use["input"])
+
+    raise ValueError("Bedrock response did not include the expected tool_use block")
 
 
 # --- Regex fallback ----------------------------------------------------------

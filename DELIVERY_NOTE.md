@@ -28,8 +28,10 @@ follow-up calls to Finance) go away. The graded traps I found and handled:
   migrations): access control seeded from `employee_master.csv`; policy
   numbers (lodging/meal caps, thresholds, bands) seeded from
   `expense_policy.md` as data, not constants.
-- **Gemini extracts, Python decides**: `gemini-3.6-flash` (multimodal, reads
-  the two receipt PNGs directly) turns each document into a structured
+- **Bedrock extracts, Python decides**: AWS Bedrock via `boto3`'s Converse API
+  (model set by `BEDROCK_MODEL_ID`; a multimodal, tool-use-capable model reads
+  the two receipt PNGs directly, forced through a tool call shaped like the
+  `ExtractionResult` schema) turns each document into a structured
   candidate; a deterministic policy engine in `app/services/policy_engine.py`
   owns every rupee and every compliance verdict — tax apportionment, tariff
   caps, dedupe, business-entertainment gating, meal caps. No money figure
@@ -79,12 +81,13 @@ follow-up calls to Finance) go away. The graded traps I found and handled:
 
 ## Where it breaks
 
-- **No Gemini API key**: "Scan my inbox" falls back to a small regex parser
-  for Uber/MakeMyTrip sender patterns only. It resolves the duplicate-cab and
-  flight-memo traps, but can't itemise the hotel folio or read the dinner
-  bill image — those need the model. Set `GEMINI_API_KEY` to see the full
-  pipeline.
-- **Gemini extraction accuracy** on receipts outside this exact pack's format
+- **No Bedrock credentials/model configured**: "Scan my inbox" falls back to a
+  small regex parser for Uber/MakeMyTrip sender patterns only. It resolves the
+  duplicate-cab and flight-memo traps, but can't itemise the hotel folio or
+  read the dinner bill image — those need the model. Set
+  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_REGION`/`BEDROCK_MODEL_ID`
+  to see the full pipeline.
+- **Bedrock extraction accuracy** on receipts outside this exact pack's format
   isn't tested — a genuinely novel merchant layout could mis-extract or land
   in the generic `OTHER` bucket with `needs_review=true`, which is the
   intended safety valve but not a substitute for a human check.

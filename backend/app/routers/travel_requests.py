@@ -73,7 +73,7 @@ def list_documents(travel_request_id: int, employee: Employee = Depends(get_curr
 
 @router.post("/{travel_request_id}/scan", response_model=ClaimDetailOut)
 def scan_inbox(travel_request_id: int, employee: Employee = Depends(get_current_employee), db: Session = Depends(get_db)):
-    """Runs Gemini (or the regex fallback) over every document linked to
+    """Runs Bedrock (or the regex fallback) over every document linked to
     this travel request and (re)builds the claim's draft lines through the
     policy engine. Safe to call repeatedly — it refreshes the existing DRAFT
     claim rather than creating duplicates.

@@ -1,11 +1,11 @@
-"""Structured-output schema for the Gemini extraction step.
+"""Structured-output schema for the Bedrock extraction step.
 
 One schema covers every document type in the pack (flight tickets, hotel
 vouchers/invoices, cab receipts, meal/entertainment bills, and the noise —
 approval threads, advance notices, promos, payment-failure notices, third
-party forwards). Gemini only ever fills this shape in; every rupee amount
+party forwards). Bedrock only ever fills this shape in; every rupee amount
 downstream is then computed by app/services/policy_engine.py, never by the
-model — see the plan's "Gemini extracts, Python decides" design note.
+model — see the plan's "Bedrock extracts, Python decides" design note.
 """
 from datetime import date
 from enum import Enum

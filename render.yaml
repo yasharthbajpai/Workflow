@@ -19,9 +19,13 @@ services:
         value: "720"
       - key: DEMO_PASSWORD
         value: Nortex@123
-      - key: GEMINI_API_KEY
+      - key: AWS_ACCESS_KEY_ID
         sync: false
-      - key: GEMINI_MODEL
-        value: gemini-3.6-flash
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
+      - key: BEDROCK_MODEL_ID
+        sync: false # e.g. anthropic.claude-3-5-sonnet-20241022-v2:0
       - key: CORS_ORIGINS
         sync: false # set to your Vercel URL, e.g. https://nortex-expense.vercel.app

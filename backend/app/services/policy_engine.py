@@ -1,9 +1,9 @@
 """Deterministic policy engine.
 
 Owns every rupee and every compliance verdict in the app — see the plan's
-"Gemini extracts, Python decides" design note. Nothing here reads from the
+"Bedrock extracts, Python decides" design note. Nothing here reads from the
 model; it only ever reads ExtractionResult objects that were already
-produced (by Gemini or the regex fallback) and turns them into ClaimLine
+produced (by Bedrock or the regex fallback) and turns them into ClaimLine
 rows with allowed/disallowed amounts and LinePolicyFlag rows, then rolls
 those up into the claim's settlement totals.
 

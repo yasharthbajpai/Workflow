@@ -4,7 +4,7 @@
 claim_line carries both sides of every judgement (legend B66: disallowed
 items go on a disallowed line with a reason, never dropped), and every money
 total downstream is a deterministic function of these rows, never a model
-output — see PLAN "Core design decision: Gemini extracts, Python decides".
+output — see PLAN "Core design decision: Bedrock extracts, Python decides".
 """
 from __future__ import annotations
 

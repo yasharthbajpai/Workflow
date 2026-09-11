@@ -48,7 +48,7 @@ class DocType(str, Enum):
 
 
 class ExtractionMode(str, Enum):
-    GEMINI = "GEMINI"
+    BEDROCK = "BEDROCK"
     REGEX_FALLBACK = "REGEX_FALLBACK"
     MANUAL = "MANUAL"
 

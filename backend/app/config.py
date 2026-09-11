@@ -1,8 +1,9 @@
 """Central application settings, sourced entirely from environment variables.
 
 Nothing here is hardcoded to a specific deployment: DATABASE_URL is provided by
-Render, GEMINI_API_KEY / GEMINI_MODEL are provided by whoever owns the Gemini
-project, and JWT_SECRET / CORS_ORIGINS are provided per-environment.
+Render, AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION / BEDROCK_MODEL_ID
+are provided by whoever owns the AWS account, and JWT_SECRET / CORS_ORIGINS are
+provided per-environment.
 """
 from functools import lru_cache
 from typing import List
@@ -23,9 +24,14 @@ class Settings(BaseSettings):
     jwt_expires_minutes: int = 60 * 12
     demo_password: str = "Nortex@123"
 
-    # --- Gemini -------------------------------------------------------
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.6-flash"
+    # --- AWS Bedrock ----------------------------------------------------
+    # aws_access_key_id/aws_secret_access_key may be left blank to fall back
+    # to boto3's default credential chain (e.g. an IAM role on Render); when
+    # both are set they're passed to the client explicitly.
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "us-east-1"
+    bedrock_model_id: str = ""
 
     # --- CORS -----------------------------------------------------------
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
