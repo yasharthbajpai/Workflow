@@ -72,12 +72,21 @@ def list_documents(travel_request_id: int, employee: Employee = Depends(get_curr
 
 
 @router.post("/{travel_request_id}/scan", response_model=ClaimDetailOut)
-def scan_inbox(travel_request_id: int, employee: Employee = Depends(get_current_employee), db: Session = Depends(get_db)):
+def scan_inbox(
+    travel_request_id: int,
+    force: bool = False,
+    employee: Employee = Depends(get_current_employee),
+    db: Session = Depends(get_db),
+):
     """Runs Bedrock (or the regex fallback) over every document linked to
     this travel request and (re)builds the claim's draft lines through the
     policy engine. Safe to call repeatedly — it refreshes the existing DRAFT
     claim rather than creating duplicates.
+
+    Each document's extraction is cached after the first scan, so a plain
+    re-scan re-runs only the policy engine. Pass force=true to discard those
+    cached extractions and call the model again.
     """
     tr = _get_owned_travel_request(db, travel_request_id, employee)
-    claim = build_or_refresh_claim(db, tr)
+    claim = build_or_refresh_claim(db, tr, force_reextract=force)
     return serialize_claim_detail(db, claim)

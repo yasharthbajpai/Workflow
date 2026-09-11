@@ -44,6 +44,11 @@ NON_REIMBURSABLE_KEYWORDS = [
 ]
 ROOM_KEYWORDS = ["room charge", "room tariff", "room rent"]
 DINING_KEYWORDS = ["dining", "restaurant", "room service"]
+DUPLICATE_FLAG_CODES = {"DUPLICATE_BILL", "DUPLICATE_DOCUMENT"}
+
+
+def _is_duplicate_line(line: ClaimLine) -> bool:
+    return any(f.code in DUPLICATE_FLAG_CODES for f in line.flags)
 
 
 def get_city_tier(db: Session, city: str | None) -> int:
@@ -121,11 +126,15 @@ def _hotel_invoice_key(ext: ExtractionResult) -> tuple:
     return ("composite", _norm(ext.merchant), r2(ext.subtotal or 0), r2(ext.tax_total or 0))
 
 
-def _meal_or_entertainment_key(ext: ExtractionResult) -> tuple:
+def _meal_or_entertainment_amount(ext: ExtractionResult) -> float:
     amount = ext.gross_amount
     if amount is None and ext.line_items:
         amount = sum(i.amount for i in ext.line_items) + (ext.tax_total or 0)
-    return (_norm(ext.merchant), r2(amount or 0))
+    return amount or 0
+
+
+def _meal_or_entertainment_key(ext: ExtractionResult) -> tuple:
+    return (_norm(ext.merchant), r2(_meal_or_entertainment_amount(ext)))
 
 
 def _duplicate_document_line(doc: Document, ext: ExtractionResult, original_doc_id: int, kind: str) -> DraftLine:
@@ -134,10 +143,7 @@ def _duplicate_document_line(doc: Document, ext: ExtractionResult, original_doc_
     another document in this claim — excluded outright, never reimbursed
     twice, mirroring the existing duplicate-cab-receipt handling.
     """
-    amount = ext.gross_amount
-    if amount is None and ext.line_items:
-        amount = sum(i.amount for i in ext.line_items) + (ext.tax_total or 0)
-    amount = amount or 0
+    amount = _meal_or_entertainment_amount(ext)
     return DraftLine(
         section=ClaimSection.OTHER,
         head="Duplicate document",
@@ -236,7 +242,7 @@ def build_draft_lines(
             continue
 
         if ext.doc_type == ExtractedDocType.FLIGHT_TICKET:
-            lines.append(_draft_flight(doc, ext))
+            lines.extend(_draft_flight(doc, ext))
         elif ext.doc_type == ExtractedDocType.CAB_RECEIPT:
             lines.append(_draft_cab(doc, ext))
         elif ext.doc_type == ExtractedDocType.HOTEL_INVOICE:
@@ -248,6 +254,14 @@ def build_draft_lines(
                 seen_documents[key] = doc.id
                 lines.extend(_draft_hotel_invoice(db, doc, ext, tier))
         elif ext.doc_type in (ExtractedDocType.MEAL_BILL, ExtractedDocType.BUSINESS_ENTERTAINMENT_BILL):
+            if _meal_or_entertainment_amount(ext) <= 0:
+                # A covering note that only refers to an attached bill ("Dinner
+                # with the Vertex team, bill attached") carries no amount. The
+                # attachment is a separate document and is the source of truth,
+                # so the note must not become a zero-value claim line of its own
+                # — it would otherwise sit alongside the real bill as a second,
+                # undetectable "duplicate" (the dedupe key is merchant+amount).
+                continue
             key = ("MEAL_OR_BE", *_meal_or_entertainment_key(ext))
             original_doc_id = seen_documents.get(key)
             if original_doc_id is not None:
@@ -284,34 +298,51 @@ def build_draft_lines(
     return lines
 
 
-def _draft_flight(doc: Document, ext: ExtractionResult) -> DraftLine:
+def _draft_flight(doc: Document, ext: ExtractionResult) -> list[DraftLine]:
+    """One line per sector. A single e-ticket routinely covers an outbound and
+    a return leg (each with its own fare), so a one-line-per-ticket reading
+    silently drops the return sector from the company-paid memo total.
+    """
     is_company = ext.payment_method == PaymentMethodHint.CORPORATE_CARD
-    amount = ext.gross_amount or 0
-    return DraftLine(
-        section=ClaimSection.TRANSPORT,
-        head="Air travel",
-        description=f"Flight {ext.from_place or ''} - {ext.to_place or ''}".strip(" -") or (doc.subject or "Flight"),
-        gross_amount=amount,
-        document_id=doc.id,
-        txn_date=ext.txn_date,
-        merchant=ext.merchant or "Airline",
-        paid_by=PaidBy.COMPANY if is_company else PaidBy.EMPLOYEE,
-        allowed_amount=amount if is_company else amount,  # Company row = memo only, not reimbursed either way
-        source=doc.extraction_mode or "MANUAL",
-        confidence=ext.confidence,
-        flags=(
-            [
-                (
-                    "COMPANY_PAID_NOT_CLAIMABLE",
-                    FlagSeverity.INFO,
-                    "3.2",
-                    "Booked centrally on the corporate card — recorded for audit, not reimbursed",
-                )
-            ]
-            if is_company
-            else []
-        ),
+    flags = (
+        [
+            (
+                "COMPANY_PAID_NOT_CLAIMABLE",
+                FlagSeverity.INFO,
+                "3.2",
+                "Booked centrally on the corporate card — recorded for audit, not reimbursed",
+            )
+        ]
+        if is_company
+        else []
     )
+
+    def _line(description: str, amount: float, txn_date: date | None) -> DraftLine:
+        return DraftLine(
+            section=ClaimSection.TRANSPORT,
+            head="Air travel",
+            description=description,
+            gross_amount=amount,
+            document_id=doc.id,
+            txn_date=txn_date,
+            merchant=ext.merchant or "Airline",
+            paid_by=PaidBy.COMPANY if is_company else PaidBy.EMPLOYEE,
+            allowed_amount=amount,  # Company row = memo only; compute_claim_totals never reimburses it
+            source=doc.extraction_mode or "MANUAL",
+            confidence=ext.confidence,
+            flags=list(flags),
+        )
+
+    if len(ext.line_items) > 1:
+        return [
+            _line(f"Flight {item.label}", item.amount, item.item_date or ext.txn_date)
+            for item in ext.line_items
+        ]
+
+    default_description = (
+        f"Flight {ext.from_place or ''} - {ext.to_place or ''}".strip(" -") or (doc.subject or "Flight")
+    )
+    return [_line(default_description, ext.gross_amount or 0, ext.txn_date)]
 
 
 def _draft_cab(doc: Document, ext: ExtractionResult) -> DraftLine:
@@ -344,12 +375,8 @@ def _draft_cab(doc: Document, ext: ExtractionResult) -> DraftLine:
 
 
 def _draft_meal_or_entertainment(doc: Document, ext: ExtractionResult) -> DraftLine:
-    amount = ext.gross_amount
-    if amount is None and ext.line_items:
-        amount = sum(i.amount for i in ext.line_items) + (ext.tax_total or 0)
-    amount = amount or 0
+    amount = _meal_or_entertainment_amount(ext)
 
-    be_threshold = None  # filled by caller via second pass (needs db); placeholder here
     is_entertainment = bool(ext.attendee_count) or ext.doc_type == ExtractedDocType.BUSINESS_ENTERTAINMENT_BILL
     head = "Business entertainment" if is_entertainment else "Meals"
     flags = []
@@ -632,7 +659,10 @@ def compute_claim_totals(claim: Claim, advance_amount: float = 0) -> None:
     # up front so this never trips a Decimal/float TypeError.
     employee_paid = sum(float(l.allowed_amount) for l in claim.lines if l.paid_by == PaidBy.EMPLOYEE and not l.excluded)
     company_paid = sum(float(l.allowed_amount) for l in claim.lines if l.paid_by == PaidBy.COMPANY and not l.excluded)
-    disallowed = sum(float(l.disallowed_amount) for l in claim.lines)
+    # A duplicate's rupees are already counted on the line it duplicates, so
+    # rolling it into "disallowed" would double-count the same bill and report
+    # a headline figure far larger than anything the employee actually claimed.
+    disallowed = sum(float(l.disallowed_amount) for l in claim.lines if not _is_duplicate_line(l))
     advance_amount = float(advance_amount)
 
     net = employee_paid  # only Employee-paid rows are ever reimbursed (legend B64)

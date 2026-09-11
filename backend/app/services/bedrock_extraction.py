@@ -26,23 +26,67 @@ from app.schemas.extraction import ExtractedDocType, ExtractedLineItem, Extracti
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """You are an expense-document parser for an Indian company's travel desk.
+_SYSTEM_PROMPT_TEMPLATE = """You are an expense-document parser for an Indian company's travel desk.
 You will be shown the text (or image) of ONE email or receipt from an employee's inbox.
+
+The inbox belongs to {owner_name} ({owner_email}). They are the claimant: the only
+person whose expenses may be claimed from this inbox.
+
 Extract it into the given JSON schema exactly, by calling the extract_expense_document tool. Rules:
 - If the message is a travel-approval thread, an advance-disbursement notice, a marketing/promo
   email, or otherwise not a specific claimable transaction, set discard=true with a short reason.
 - If a payment failed (e.g. "Payment failed", "We could not charge your card"), set
   doc_type=PAYMENT_FAILURE_NOTICE and discard=true — it is not a valid expense.
-- If the receipt greeting or booking name refers to someone other than the account owner
-  (e.g. "Thanks for riding, Deepa" when the inbox owner is someone else, or an explicit
-  forward asking to add another person's expense), set traveler_name to that other person's
-  name and doc_type=THIRD_PARTY_FORWARD.
+- Always set traveler_name to whoever the receipt greets or was booked for, when shown.
+- A first-name-only greeting that matches {owner_name}'s own first name IS the claimant.
+  "Thanks for riding, {owner_first_name}" is {owner_name}'s own receipt — classify it as the
+  normal document type (e.g. CAB_RECEIPT), never THIRD_PARTY_FORWARD.
+- Only use doc_type=THIRD_PARTY_FORWARD when the expense genuinely belongs to a DIFFERENT
+  person than {owner_name} — e.g. "Thanks for riding, Deepa", or a colleague forwarding their
+  own bill and asking for it to be added to the claim.
+- Being a forward is NOT by itself third-party. {owner_name} re-sending or forwarding their own
+  receipt is still their own expense: classify it by what the receipt actually is. Duplicates are
+  detected later by a separate step, so do not discard a document merely for looking repeated.
+- If one ticket or invoice covers MULTIPLE sectors/segments/nights (e.g. an outbound flight and a
+  return flight on the same booking), emit one entry in line_items per sector with its own amount
+  and date, and set gross_amount to the total across all of them.
 - For itemised bills (hotel folios, restaurant bills) populate line_items with every line,
   plus subtotal and tax_total exactly as printed. Do not compute or apportion anything yourself.
 - For business entertainment / hosted meals, extract attendee_count and any attendee names or
   organisation mentioned, even if incomplete.
-- Never invent numbers. If a field is not present in the document, leave it null/empty.
+- If the document is only a covering note referring to an attachment ("bill attached") and shows
+  no amount itself, set discard=true with reason "covering note, amount is in the attachment" —
+  the attachment is parsed separately and is the source of truth.
+- Never invent numbers or dates. If a field is not present in the document, leave it null/empty.
+  In particular do not guess a year: use the year printed on the document or in its Date header.
 """
+
+
+def _system_prompt(claimant_name: str | None, claimant_email: str | None) -> str:
+    name = claimant_name or "the employee"
+    return _SYSTEM_PROMPT_TEMPLATE.format(
+        owner_name=name,
+        owner_email=claimant_email or "unknown",
+        owner_first_name=name.split()[0],
+    )
+
+
+def _first_name(full_name: str | None) -> str:
+    return (full_name or "").strip().split()[0].lower() if (full_name or "").strip() else ""
+
+
+def _greeting_is_claimant(greeting_name: str | None, claimant_name: str | None) -> bool:
+    """A receipt greeting like "Chaitanya" belongs to the claimant when it
+    matches any part of their name. Used by the regex fallback, which has no
+    model to reason about identity for it.
+    """
+    if not greeting_name:
+        return False
+    if not claimant_name:
+        return True  # unknown claimant: assume the inbox owner's own receipt
+    greeting = greeting_name.strip().lower()
+    parts = [p.lower() for p in claimant_name.split()]
+    return greeting in parts or greeting == claimant_name.strip().lower()
 
 _TOOL_NAME = "extract_expense_document"
 
@@ -85,14 +129,23 @@ def _tool_config() -> dict:
     }
 
 
-def extract_document(document: Document) -> tuple[ExtractionResult, ExtractionMode]:
+def extract_document(
+    document: Document,
+    claimant_name: str | None = None,
+    claimant_email: str | None = None,
+) -> tuple[ExtractionResult, ExtractionMode]:
+    """Extract one document. The claimant's identity is required to tell the
+    claimant's own receipts apart from a colleague's forwarded expense — both
+    the model prompt and the regex fallback need it, so it is threaded in
+    rather than inferred from the document alone.
+    """
     if settings.bedrock_model_id:
         try:
-            result = _extract_with_bedrock(document)
+            result = _extract_with_bedrock(document, claimant_name, claimant_email)
             return result, ExtractionMode.BEDROCK
         except Exception:  # noqa: BLE001 — any SDK/network/credentials failure falls back
             logger.exception("Bedrock extraction failed for document %s, falling back to regex", document.id)
-    result = _extract_with_regex(document)
+    result = _extract_with_regex(document, claimant_name)
     return result, ExtractionMode.REGEX_FALLBACK
 
 
@@ -101,7 +154,11 @@ def _image_format(mime_type: str | None) -> str:
     return "jpeg" if fmt == "jpg" else fmt
 
 
-def _extract_with_bedrock(document: Document) -> ExtractionResult:
+def _extract_with_bedrock(
+    document: Document,
+    claimant_name: str | None = None,
+    claimant_email: str | None = None,
+) -> ExtractionResult:
     client = _get_client()
 
     if document.image_bytes:
@@ -121,7 +178,7 @@ def _extract_with_bedrock(document: Document) -> ExtractionResult:
 
     response = client.converse(
         modelId=settings.bedrock_model_id,
-        system=[{"text": _SYSTEM_PROMPT}],
+        system=[{"text": _system_prompt(claimant_name, claimant_email)}],
         messages=[{"role": "user", "content": content}],
         toolConfig=_tool_config(),
     )
@@ -144,7 +201,7 @@ def _to_amount(text: str) -> float | None:
     return float(m.group(1).replace(",", "")) if m else None
 
 
-def _extract_with_regex(document: Document) -> ExtractionResult:
+def _extract_with_regex(document: Document, claimant_name: str | None = None) -> ExtractionResult:
     text = document.raw_text or ""
     sender = (document.sender or "").lower()
     subject = (document.subject or "").lower()
@@ -160,7 +217,7 @@ def _extract_with_regex(document: Document) -> ExtractionResult:
         )
 
     if "uber" in sender:
-        return _extract_uber(text)
+        return _extract_uber(text, claimant_name)
     if "makemytrip" in sender:
         return _extract_makemytrip(text, subject)
     if "offers@" in sender or "promo" in subject or "% off" in text.lower():
@@ -180,12 +237,15 @@ def _extract_with_regex(document: Document) -> ExtractionResult:
             discard_reason="Approval thread, not a claim line",
         )
     if "fwd:" in subject and "uber" in text.lower():
-        return _extract_third_party_forward(text)
+        # A forward is only third-party when the receipt greets someone other
+        # than the claimant; the claimant re-sending their own receipt is still
+        # their own expense (the dedupe pass catches the repeat).
+        return _extract_uber(text, claimant_name)
 
     return ExtractionResult(doc_type=ExtractedDocType.OTHER, discard=False, confidence=0.2)
 
 
-def _extract_uber(text: str) -> ExtractionResult:
+def _extract_uber(text: str, claimant_name: str | None = None) -> ExtractionResult:
     if "payment failed" in text.lower() or "could not charge" in text.lower():
         amount = _to_amount(text)
         return ExtractionResult(
@@ -206,11 +266,16 @@ def _extract_uber(text: str) -> ExtractionResult:
             txn_date = datetime.strptime(date_m.group(1), "%d %b %Y").date()
         except ValueError:
             txn_date = None
+
+    greeting_name = greet.group(1) if greet else None
+    if greeting_name and not _greeting_is_claimant(greeting_name, claimant_name):
+        return _extract_third_party_forward(text, greeting_name, claimant_name)
+
     return ExtractionResult(
         doc_type=ExtractedDocType.CAB_RECEIPT,
         discard=False,
         merchant="Uber",
-        traveler_name=greet.group(1) if greet else None,
+        traveler_name=greeting_name,
         txn_date=txn_date,
         from_place=pickup.group(1).strip() if pickup else None,
         to_place=drop.group(1).strip() if drop else None,
@@ -220,15 +285,25 @@ def _extract_uber(text: str) -> ExtractionResult:
     )
 
 
-def _extract_third_party_forward(text: str) -> ExtractionResult:
+def _extract_third_party_forward(
+    text: str,
+    greeting_name: str | None = None,
+    claimant_name: str | None = None,
+) -> ExtractionResult:
     amount = _to_amount(text)
-    greet = re.search(r"riding,\s*(\w+)", text)
+    if greeting_name is None:
+        greet = re.search(r"riding,\s*(\w+)", text)
+        greeting_name = greet.group(1) if greet else None
+    who = greeting_name or "another employee"
     return ExtractionResult(
         doc_type=ExtractedDocType.THIRD_PARTY_FORWARD,
         discard=True,
-        discard_reason="Forwarded expense belongs to a different employee",
+        discard_reason=(
+            f"Receipt is addressed to {who}, not the claimant"
+            + (f" ({claimant_name})" if claimant_name else "")
+        ),
         merchant="Uber",
-        traveler_name=greet.group(1) if greet else None,
+        traveler_name=greeting_name,
         gross_amount=amount,
         confidence=0.6,
     )

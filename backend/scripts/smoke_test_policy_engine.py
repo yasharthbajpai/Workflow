@@ -37,11 +37,18 @@ EXPECTED: dict[str, ExtractionResult] = {
     "01_travel_approval_request.eml": ExtractionResult(doc_type=ExtractedDocType.TRAVEL_APPROVAL_REQUEST, discard=True),
     "02_travel_approval_granted.eml": ExtractionResult(doc_type=ExtractedDocType.TRAVEL_APPROVAL_GRANTED, discard=True),
     "03_advance_disbursed.eml": ExtractionResult(doc_type=ExtractedDocType.ADVANCE_NOTICE, discard=True),
+    # One booking, two sectors, each with its own fare — the shape the
+    # extractor returns for a return ticket. Both must survive as separate
+    # memo rows; collapsing them into one row silently loses a sector.
     "04_flight_eticket.eml": ExtractionResult(
         doc_type=ExtractedDocType.FLIGHT_TICKET,
         discard=False,
         merchant="IndiGo / MakeMyTrip",
         gross_amount=5016.00 + 5540.00,
+        line_items=[
+            ExtractedLineItem(label="Pune - Bengaluru | 6E-6284", item_date=date(2026, 6, 16), amount=5016.00),
+            ExtractedLineItem(label="Bengaluru - Pune | 6E-6491", item_date=date(2026, 6, 20), amount=5540.00),
+        ],
         payment_method=PaymentMethodHint.CORPORATE_CARD,
         from_place="Pune",
         to_place="Bengaluru",
@@ -241,6 +248,8 @@ def main() -> None:
 
     flight_lines = [l for l in claim.lines if l.head == "Air travel"]
     assert flight_lines and all(l.paid_by == "Company" for l in flight_lines), "flights must be Company-paid"
+    assert len(flight_lines) == 2, f"both flight sectors must survive as separate rows, got {len(flight_lines)}"
+    assert sum(float(l.gross_amount) for l in flight_lines) == 10556.00, "both sectors must total 10,556"
 
     lodging_lines = [l for l in claim.lines if l.head == "Lodging"]
     assert len(lodging_lines) == 1
@@ -266,8 +275,21 @@ def main() -> None:
     ]
     assert len(duplicate_dinner) == 1, f"expected exactly one excluded duplicate dinner-bill line, got {len(duplicate_dinner)}"
 
+    airport_transfer = [l for l in claim.lines if l.gross_amount == 743.00]
+    assert len(airport_transfer) == 1, f"expected the BLR airport transfer, got {len(airport_transfer)}"
+    assert not airport_transfer[0].excluded, "the claimant's own airport transfer must be reimbursed (policy 3.4)"
+    assert airport_transfer[0].allowed_amount == 743.00, "airport transfer is reimbursed on actuals"
+
     blocking = policy_engine.has_blocking_flags(claim)
     assert blocking, "claim should have at least one BLOCK flag (missing BE attendees) preventing submission"
+
+    # Pin the settlement totals. A duplicate's rupees must never reach the
+    # disallowed roll-up, or the headline figure balloons past anything the
+    # employee actually claimed (the two duplicates here are 21,504 + 2,255).
+    assert float(claim.total_employee_paid) == 23999.04, f"got {claim.total_employee_paid}"
+    assert float(claim.total_company_paid) == 10556.00, f"got {claim.total_company_paid}"
+    assert float(claim.total_disallowed) == 1642.00, f"got {claim.total_disallowed}"
+    assert float(claim.amount_payable) == 3999.04, f"got {claim.amount_payable}"
 
     print("\nAll assertions passed.")
     db.close()
