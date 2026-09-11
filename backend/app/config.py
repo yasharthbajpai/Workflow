@@ -42,12 +42,16 @@ class Settings(BaseSettings):
 
     @property
     def sqlalchemy_database_uri(self) -> str:
-        """Normalise postgres:// / postgresql:// (Render's format) to the psycopg driver."""
+        """Normalise any Postgres URL to the psycopg3 driver we ship.
+
+        Local .env may still say postgresql+psycopg2://; Render/Neon often
+        give postgres:// or postgresql://. requirements.txt installs
+        psycopg[binary], not psycopg2, so every form is rewritten here.
+        """
         url = self.database_url
-        if url.startswith("postgres://"):
-            url = "postgresql+psycopg://" + url[len("postgres://") :]
-        elif url.startswith("postgresql://") and "+psycopg" not in url:
-            url = "postgresql+psycopg://" + url[len("postgresql://") :]
+        for prefix in ("postgresql+psycopg2://", "postgresql+psycopg://", "postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url[len(prefix) :]
         return url
 
 
