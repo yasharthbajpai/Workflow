@@ -3,7 +3,8 @@ import { useParams } from "react-router-dom";
 import { ClaimsApi } from "../api/endpoints";
 import { ApprovalProgress } from "../components/ApprovalProgress";
 import { ClaimLinesTable } from "../components/ClaimLinesTable";
-import { inr, shortDate } from "../lib/format";
+import { SettlementSummary } from "../components/SettlementSummary";
+import { inr } from "../lib/format";
 import { useAuth } from "../auth/AuthContext";
 
 export function ClaimDetailPage() {
@@ -95,22 +96,9 @@ export function ClaimDetailPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="rounded-xl border bg-white p-5 shadow-sm">
           <h2 className="text-sm font-semibold text-slate-700">Settlement summary</h2>
-          <dl className="mt-3 space-y-2 text-sm">
-            <Row label="Total paid by employee" value={inr(claim.total_employee_paid)} />
-            <Row label="Total paid by company (memo)" value={inr(claim.total_company_paid)} />
-            <Row label="Disallowed" value={inr(claim.total_disallowed)} valueClass="text-red-600" />
-            <Row label="Net reimbursable" value={inr(claim.net_reimbursable)} bold />
-            <Row label="Advance drawn" value={inr(claim.advance_drawn)} />
-            <Row label="Amount payable" value={inr(claim.amount_payable)} valueClass="text-emerald-700" bold />
-            <Row label="Amount recoverable" value={inr(claim.amount_recoverable)} valueClass="text-red-600" bold />
-          </dl>
-          {claim.payment && (
-            <div className="mt-3 border-t pt-3 text-sm">
-              <Row label="Payment status" value={claim.payment.status} />
-              <Row label="Scheduled run" value={shortDate(claim.payment.scheduled_run_date)} />
-              {claim.payment.reference && <Row label="Reference" value={claim.payment.reference} />}
-            </div>
-          )}
+          <div className="mt-3">
+            <SettlementSummary claim={claim} />
+          </div>
         </div>
 
         <div className="rounded-xl border bg-white p-5 shadow-sm">
@@ -132,11 +120,3 @@ export function ClaimDetailPage() {
   );
 }
 
-function Row({ label, value, bold, valueClass }: { label: string; value: string; bold?: boolean; valueClass?: string }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-slate-500">{label}</span>
-      <span className={`${bold ? "font-bold" : "font-medium"} ${valueClass ?? "text-slate-800"}`}>{value}</span>
-    </div>
-  );
-}

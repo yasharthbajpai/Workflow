@@ -54,8 +54,27 @@ const inputClass =
 const readOnlyClass =
   "w-full rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-700";
 
+const IMRAN_DEMO = {
+  fromDate: "2026-09-08",
+  toDate: "2026-09-10",
+  visitingPlace: "Hyderabad / Apex Dynamics",
+  city: "Hyderabad",
+  purpose: "Product demo + contract negotiation",
+  modeOfTravel: "Flight",
+  isInternational: false,
+  advance: "6000",
+  lines: [
+    { head: "Air / Rail", basis: "Return, economy", estimate: "8600", borne_by: "Company" as BorneBy },
+    { head: "Lodging", basis: "2 nights", estimate: "12000", borne_by: "Employee" as BorneBy },
+    { head: "Local conveyance", basis: "Actuals", estimate: "2500", borne_by: "Employee" as BorneBy },
+    { head: "Meals / allowance", basis: "As per policy", estimate: "4000", borne_by: "Employee" as BorneBy },
+    { head: "Other", basis: "Client dinner", estimate: "2500", borne_by: "Employee" as BorneBy },
+  ],
+};
+
 export function TravelRequestForm({ onCreated }: { onCreated: () => void }) {
   const { employee } = useAuth();
+  const isImran = employee?.email === "imran.qureshi@nortexindustries.com";
   const [open, setOpen] = useState(false);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -68,6 +87,18 @@ export function TravelRequestForm({ onCreated }: { onCreated: () => void }) {
   const [lines, setLines] = useState<EstimateDraft[]>(
     DEFAULT_HEADS.map((h) => ({ ...h, estimate: "" })),
   );
+
+  const fillImranDemo = () => {
+    setFromDate(IMRAN_DEMO.fromDate);
+    setToDate(IMRAN_DEMO.toDate);
+    setVisitingPlace(IMRAN_DEMO.visitingPlace);
+    setCity(IMRAN_DEMO.city);
+    setPurpose(IMRAN_DEMO.purpose);
+    setModeOfTravel(IMRAN_DEMO.modeOfTravel);
+    setIsInternational(IMRAN_DEMO.isInternational);
+    setAdvance(IMRAN_DEMO.advance);
+    setLines(IMRAN_DEMO.lines);
+  };
 
   const nights = useMemo(() => {
     const d = daysInclusive(fromDate, toDate);
@@ -138,10 +169,33 @@ export function TravelRequestForm({ onCreated }: { onCreated: () => void }) {
       className="w-full max-w-5xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
     >
       <div className="border-b bg-white px-5 py-4">
-        <div className="text-lg font-semibold tracking-wide text-slate-900">TRAVEL REQUEST FORM</div>
-        <div className="text-xs text-slate-500">
-          Nortex Industries Ltd | Form NTX-TRF-02 | Rev Nov 2025
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-lg font-semibold tracking-wide text-slate-900">TRAVEL REQUEST FORM</div>
+            <div className="text-xs text-slate-500">
+              Nortex Industries Ltd | Form NTX-TRF-02 | Rev Nov 2025
+            </div>
+          </div>
+          {isImran && (
+            <button
+              type="button"
+              onClick={fillImranDemo}
+              className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+            >
+              Fill Hyderabad demo trip
+            </button>
+          )}
         </div>
+        {isImran && (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Your inbox already has a fake Hyderabad trip (8–10 Sep, Apex Dynamics). Fill the amber
+            cells to match that trip — or click the button above — then Create, then{" "}
+            <span className="font-semibold">Scan my inbox with AI</span>. After scan, the dinner
+            line will ask for attendee names: use{" "}
+            <span className="font-semibold">Priya Malhotra, Vikram Seth</span> /{" "}
+            <span className="font-semibold">Apex Dynamics</span>.
+          </div>
+        )}
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Travel Request ID">
             <div className={readOnlyClass}>Assigned on create (TRQ-YYYY-nnnn)</div>

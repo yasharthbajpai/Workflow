@@ -1,0 +1,27 @@
+From: Novotel Hyderabad <reservations@novotelhyd.example>
+To: Imran Qureshi <imran.qureshi@nortexindustries.com>
+Subject: Tax Invoice INV-HYD-88421 - Novotel Hyderabad Convention Centre
+Date: Thu, 10 Sep 2026 08:40:22 +0530
+Message-ID: <imran-hotel-09@novotelhyd.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+TAX INVOICE
+Novotel Hyderabad Convention Centre
+Bill number: INV-HYD-88421
+Guest: Imran Qureshi
+Check-in: 8 Sep 2026
+Check-out: 10 Sep 2026
+Nights: 2
+
+Room Charge (8 Sep)     5,400.00
+Room Charge (9 Sep)     5,400.00
+Laundry                   320.00
+Mini Bar                  180.00
+In-room Dining            890.00
+Subtotal               12,190.00
+CGST 6%                   731.40
+SGST 6%                   731.40
+Grand Total            13,652.80
+
+Payment: Pay at hotel - personal card

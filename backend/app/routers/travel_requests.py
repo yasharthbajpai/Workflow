@@ -96,6 +96,18 @@ def create_travel_request(
             )
         )
 
+    # Attach any inbox documents that were seeded for this employee but not
+    # yet tied to a trip (Imran's Hyderabad pack). Without this, "Scan my
+    # inbox" on a freshly created request would find zero documents.
+    unlinked = db.scalars(
+        select(Document).where(
+            Document.employee_code == employee.emp_code,
+            Document.travel_request_id.is_(None),
+        )
+    ).all()
+    for doc in unlinked:
+        doc.travel_request_id = tr.id
+
     db.commit()
     db.refresh(tr)
     db.refresh(tr, attribute_names=["estimate_lines"])

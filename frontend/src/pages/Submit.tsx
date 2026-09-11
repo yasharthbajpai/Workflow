@@ -45,6 +45,10 @@ export function SubmitPage() {
         <h1 className="text-lg font-bold text-slate-800">Submit a travel expense claim</h1>
         <p className="text-sm text-slate-500">
           Pick a travel request, scan the inbox for it, review what the AI extracted, then submit.
+          To try filling the form from scratch, log in as{" "}
+          <span className="font-medium text-slate-700">imran.qureshi@nortexindustries.com</span>{" "}
+          (password <span className="font-medium text-slate-700">Nortex@123</span>) — he has a
+          fake Hyderabad inbox waiting.
         </p>
       </div>
 

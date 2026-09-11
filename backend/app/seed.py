@@ -48,6 +48,7 @@ from app.models.enums import TravelRequestStatus
 PACK_DIR = Path(__file__).resolve().parents[2]
 EMAILS_DIR = PACK_DIR / "sample_emails"
 RECEIPTS_DIR = PACK_DIR / "receipts"
+IMRAN_EMAILS_DIR = PACK_DIR / "sample_emails_imran"
 EMPLOYEE_CSV = PACK_DIR / "employee_master.csv"
 
 # employee_master.csv role string -> app_role.code
@@ -355,6 +356,37 @@ def seed_chaitanya_trip(db: Session) -> TravelRequest | None:
     return tr
 
 
+def seed_imran_inbox(db: Session) -> None:
+    """A second inbox (Imran Qureshi, NX-4490) with fake names, left
+    unlinked to any travel request so the user can fill Form NTX-TRF-02
+    themselves and then scan. create_travel_request attaches these docs
+    when Imran raises the matching Hyderabad trip.
+    """
+    employee_code = "NX-4490"
+    if not db.get(Employee, employee_code):
+        return
+    if db.query(Document).filter(Document.employee_code == employee_code).count() > 0:
+        return
+    if not IMRAN_EMAILS_DIR.exists():
+        return
+
+    for path in sorted(IMRAN_EMAILS_DIR.glob("*.eml")):
+        msg = _parse_eml(path)
+        db.add(
+            Document(
+                employee_code=employee_code,
+                travel_request_id=None,
+                filename=path.name,
+                mime_type="message/rfc822",
+                sender=msg.get("From"),
+                subject=msg.get("Subject"),
+                received_at=_received_at(msg),
+                raw_text=_plain_text(msg),
+            )
+        )
+    db.flush()
+
+
 def run(db: Session | None = None) -> None:
     """Seeds roles/permissions/employees/policy-data/the demo trip/documents.
 
@@ -378,6 +410,7 @@ def run(db: Session | None = None) -> None:
         db.commit()
 
         seed_documents(db, "NX-4471", tr.id if tr else None)
+        seed_imran_inbox(db)
         db.commit()
         print("Seed complete.")
     except Exception:
