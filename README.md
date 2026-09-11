@@ -13,6 +13,18 @@ employee's inbox goes in, a policy-checked, approval-routed claim comes out.
 See [`DELIVERY_NOTE.md`](DELIVERY_NOTE.md) for what this is, the assumptions made,
 and where it breaks.
 
+## Links
+
+- **Live demo:** https://workflow-eta-nine.vercel.app/login
+- **Source:** https://github.com/yasharthbajpai/Workflow
+- **Delivery note:** https://github.com/yasharthbajpai/Workflow/blob/main/DELIVERY_NOTE.md
+- **Walkthrough video:** https://drive.google.com/file/d/1j34kNOgzTLkCvskWZUKWwJ7up5s6WUjS/view?usp=sharing
+- **Cursor chat log:** https://drive.google.com/file/d/1gaGu_osqjzMYvdXys7482njEEBRTuIuV/view?usp=sharing
+
+Every seeded account uses the password `Nortex@123`. Sign in as
+`chaitanya.reddy@nortexindustries.com` to scan `TRQ-2026-0001`, or as
+`imran.qureshi@nortexindustries.com` to raise a new travel request from scratch.
+
 ## Run it locally
 
 Prerequisites: Python 3.11+, Node 18+, a Postgres instance (local or remote).
