@@ -2,6 +2,7 @@ services:
   - type: web
     name: nortex-travel-expense-api
     runtime: python
+    pythonVersion: "3.12.8"
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
